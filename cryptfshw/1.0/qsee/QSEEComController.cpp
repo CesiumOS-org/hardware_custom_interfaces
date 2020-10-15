@@ -16,34 +16,33 @@
 
 #define LOG_TAG "vendor.qti.hardware.cryptfshw@1.0-impl-qti.qsee"
 
-#include <dlfcn.h>
-#include <thread>
+#include "QSEEComController.h"
 
-#include <android-base/logging.h>
-#include <android-base/properties.h>
 #include <CryptfsHwUtils.h>
 #include <Types.h>
+#include <android-base/logging.h>
+#include <android-base/properties.h>
+#include <dlfcn.h>
 
-#include "QSEEComController.h"
+#include <thread>
 
 namespace {
 constexpr char kFilename[] = "libQSEEComAPI.so";
 
-bool IsQseecomUp() {
 #ifdef WAIT_FOR_QSEE
+bool IsQseecomUp() {
+    using namespace std::chrono_literals;
     for (size_t i = 0; i < CRYPTFS_HW_UP_CHECK_COUNT; i++) {
         if (::android::base::GetBoolProperty("sys.keymaster.loaded", false)) {
             return true;
         }
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        std::this_thread::sleep_for(100ms);
     }
 
     LOG(ERROR) << "Timed out waiting for QSEECom";
     return false;
-#else
-    return true;
-#endif
 }
+#endif
 }  // anonymous namespace
 
 namespace vendor {
@@ -73,11 +72,12 @@ Controller::Controller() {
         return;
     }
 
+#ifdef WAIT_FOR_QSEE
     if (!IsQseecomUp()) {
-        LOG(ERROR)
-                << "Timed out waiting for QSEECom listeners. Aborting FDE key operation";
+        LOG(ERROR) << "Timed out waiting for QSEECom listeners. Aborting FDE key operation";
         return;
     }
+#endif
 
     handle_ = handle;
     mFn_create_key = loadFunction<int (*)(int, void*)>("QSEECom_create_key");
@@ -101,24 +101,20 @@ int Controller::createKey(int usage, const char* passwd) {
 
     if (mFn_create_key == nullptr) return CRYPTFS_HW_UPDATE_KEY_FAILED;
 
-    if (usage < CRYPTFS_HW_KM_USAGE_DISK_ENCRYPTION || usage > CRYPTFS_HW_KM_USAGE_MAX) {
-        LOG_TO(SYSTEM, ERROR) << "Error:: unsupported usage " << usage;
-        return CRYPTFS_HW_CREATE_KEY_FAILED;
-    }
-
     GetTmpPasswd(passwd, hash32, MAX_PASSWORD_LEN);
 
     ret = mFn_create_key(usage, hash32);
     if (ret) {
         LOG(ERROR) << "Error::Qseecom call to create encryption key for usage " << usage
-                              << " failed with ret = " << ret << ", errno = " << errno;
-        if (errno == ERANGE)
+                   << " failed with ret = " << ret << ", errno = " << errno;
+        if (errno == ERANGE) {
             ret = CRYPTFS_HW_KMS_MAX_FAILURE;
-        else
+        } else {
             ret = CRYPTFS_HW_CREATE_KEY_FAILED;
+        }
     } else {
         LOG(ERROR) << "SUCESS::Qseecom call to create encryption key for usage " << usage
-                              << " success with ret = " << ret;
+                   << " success with ret = " << ret;
     }
 
     secure_memset(hash32, 0, MAX_PASSWORD_LEN);
@@ -132,25 +128,21 @@ int Controller::updateKey(int usage, const char* oldpw, const char* newpw) {
 
     if (mFn_update_key_user_info == nullptr) return CRYPTFS_HW_UPDATE_KEY_FAILED;
 
-    if (usage < CRYPTFS_HW_KM_USAGE_DISK_ENCRYPTION || usage > CRYPTFS_HW_KM_USAGE_MAX) {
-        LOG_TO(SYSTEM, ERROR) << "Error:: unsupported usage " << usage;
-        return CRYPTFS_HW_UPDATE_KEY_FAILED;
-    }
-
     GetTmpPasswd(oldpw, current_hash32, MAX_PASSWORD_LEN);
     GetTmpPasswd(newpw, new_hash32, MAX_PASSWORD_LEN);
 
     ret = mFn_update_key_user_info(usage, current_hash32, new_hash32);
     if (ret) {
-        LOG(ERROR) << "Error::Qseecom call to update the encryption key for usage "
-                              << usage << " failed with ret = " << ret << ", errno = " << errno;
-        if (errno == ERANGE)
+        LOG(ERROR) << "Error::Qseecom call to update the encryption key for usage " << usage
+                   << " failed with ret = " << ret << ", errno = " << errno;
+        if (errno == ERANGE) {
             ret = CRYPTFS_HW_KMS_MAX_FAILURE;
-        else
+        } else {
             ret = CRYPTFS_HW_UPDATE_KEY_FAILED;
+        }
     } else {
-        LOG(ERROR) << "SUCCESS::Qseecom call to update the encryption key for usage "
-                              << usage << " success with ret = " << ret;
+        LOG(ERROR) << "SUCCESS::Qseecom call to update the encryption key for usage " << usage
+                   << " success with ret = " << ret;
     }
 
     secure_memset(current_hash32, 0, MAX_PASSWORD_LEN);
@@ -164,19 +156,14 @@ int Controller::wipeKey(int usage) {
 
     if (mFn_wipe_key == nullptr) return CRYPTFS_HW_UPDATE_KEY_FAILED;
 
-    if (usage < CRYPTFS_HW_KM_USAGE_DISK_ENCRYPTION || usage > CRYPTFS_HW_KM_USAGE_MAX) {
-        LOG_TO(SYSTEM, ERROR) << "Error:: unsupported usage " << usage;
-        return CRYPTFS_HW_UPDATE_KEY_FAILED;
-    }
-
     ret = mFn_wipe_key(usage);
     if (ret) {
-        LOG(ERROR) << "Error::Qseecom call to wipe the encryption key for usage "
-                              << usage << " failed with ret = " << ret << ", errno = " << errno;
+        LOG(ERROR) << "Error::Qseecom call to wipe the encryption key for usage " << usage
+                   << " failed with ret = " << ret << ", errno = " << errno;
         ret = CRYPTFS_HW_WIPE_KEY_FAILED;
     } else {
-        LOG(ERROR) << "SUCCESS::Qseecom call to wipe the encryption key for usage "
-                              << usage << " success with ret = " << ret;
+        LOG(ERROR) << "SUCCESS::Qseecom call to wipe the encryption key for usage " << usage
+                   << " success with ret = " << ret;
     }
     return ret;
 }
